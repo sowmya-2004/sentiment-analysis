@@ -5,16 +5,31 @@ from io import BytesIO
 from nltk.sentiment import SentimentIntensityAnalyzer
 from googletrans import Translator
 
-app = Flask(__name__, template_folder='templates')
+app = Flask(__name__, template_folder='templ')
 
 def load_reviews(file):
     reviews = file.read().decode('utf-8').splitlines()
     return reviews
 
-def translate_to_english(text):
+
+def translate_to_english(reviews):
     translator = Translator()
-    translated = translator.translate(text, src='auto', dest='en')
-    return translated.text
+    english_reviews = []
+
+    for review in reviews:
+        try:
+            translation = translator.translate(review)
+            if translation.text:
+                english_reviews.append(translation.text)
+            else:
+                # If translation is empty, use the original review
+                english_reviews.append(review)
+        except Exception as e:
+            print(f"Translation error: {e}")
+            # If an error occurs during translation, use the original review
+            english_reviews.append(review)
+
+    return english_reviews
 
 def analyze_sentiments(reviews):
     sia = SentimentIntensityAnalyzer()
@@ -29,7 +44,7 @@ def count_sentiments(sentiment_scores):
 
 @app.route('/')
 def index():
-    return render_template('new/index.html')
+    return render_template('index.html')
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -48,10 +63,12 @@ def analyze():
     print(reviews)
 
     # Translate reviews to English
-    reviews_english = [translate_to_english(review) for review in reviews]
+    english_reviews = translate_to_english(reviews)
+    print("Translated Reviews:")
+    print(english_reviews)
 
     # Analyze sentiments using polarity scores
-    sentiment_scores = analyze_sentiments(reviews_english)
+    sentiment_scores = analyze_sentiments(english_reviews)
 
     print("Sentiment Scores:")
     print(sentiment_scores)

@@ -4,17 +4,22 @@ import base64
 from io import BytesIO
 from nltk.sentiment import SentimentIntensityAnalyzer
 from googletrans import Translator
+import threading
 
 app = Flask(__name__, template_folder='templ')
+lock = threading.Lock()
 
 def load_reviews(file):
     reviews = file.read().decode('utf-8').splitlines()
     return reviews
 
-
 def translate_to_english(reviews):
     translator = Translator()
     english_reviews = []
+
+    # Ensure reviews are treated as a list
+    if not isinstance(reviews, list):
+        reviews = [reviews]
 
     for review in reviews:
         try:
@@ -31,16 +36,69 @@ def translate_to_english(reviews):
 
     return english_reviews
 
-def analyze_sentiments(reviews):
+def analyze_sentiments(review):
     sia = SentimentIntensityAnalyzer()
-    sentiment_scores = [sia.polarity_scores(review)["compound"] for review in reviews]
-    return sentiment_scores
+    sentiment_score = sia.polarity_scores(review)["compound"]
+    return sentiment_score
 
-def count_sentiments(sentiment_scores):
-    sentiment_counts = {'positive': sum(score > 0 for score in sentiment_scores),
-                        'neutral': sum(score == 0 for score in sentiment_scores),
-                        'negative': sum(score < 0 for score in sentiment_scores)}
-    return sentiment_counts
+def classify_review(sentiment_score):
+    if sentiment_score > 0:
+        return 'positive'
+    elif sentiment_score < 0:
+        return 'negative'
+    else:
+        return 'neutral'
+
+def generate_plot(sentiment_counts):
+    plt.figure()
+    labels = list(sentiment_counts.keys())
+    sizes = list(sentiment_counts.values())
+
+    colors = ['gold', 'lightcoral', 'lightskyblue']
+
+    plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140)
+    plt.axis('equal')
+    plt.title('Sentiment Distribution (Predicted)')
+
+    img_base64 = plot_to_base64(plt.gcf())  # gcf() retrieves the current figure
+
+    return img_base64
+
+def analyze_and_plot(file):
+    reviews = load_reviews(file)
+    if not reviews or all(not review.strip() for review in reviews):
+        return jsonify({'error': 'No valid reviews in the file'})
+
+    print("Contents of reviews file:")
+    print(reviews)
+
+    sentiment_counts = {
+        'positive': 0,
+        'neutral': 0,
+        'negative': 0
+    }
+
+    for review in reviews:
+        stripped_review = review.strip()
+        if stripped_review:
+            sentiment_score = analyze_sentiments(stripped_review)
+            classification = classify_review(sentiment_score)
+            sentiment_counts[classification] += 1
+
+    print("Sentiment Counts:")
+    print(sentiment_counts)
+
+    img_base64 = generate_plot(sentiment_counts)
+
+    return jsonify({'image': img_base64, 'sentiment_counts': sentiment_counts})
+
+def plot_to_base64(figure):
+    buf = BytesIO()
+    figure.savefig(buf, format='png')
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close(figure)  # Clear the figure
+    return img_base64
 
 @app.route('/')
 def index():
@@ -55,52 +113,7 @@ def analyze():
     if file.filename == '':
         return jsonify({'error': 'No selected file'})
 
-    reviews = load_reviews(file)
-    if not reviews:
-        return jsonify({'error': 'Empty file'})
-
-    print("Contents of reviews file:")
-    print(reviews)
-
-    # Translate reviews to English
-    english_reviews = translate_to_english(reviews)
-    print("Translated Reviews:")
-    print(english_reviews)
-
-    # Analyze sentiments using polarity scores
-    sentiment_scores = analyze_sentiments(english_reviews)
-
-    print("Sentiment Scores:")
-    print(sentiment_scores)
-
-    # Count the number of reviews for each sentiment
-    sentiment_counts = count_sentiments(sentiment_scores)
-
-    print("Sentiment Counts:")
-    print(sentiment_counts)
-
-    # Create a new figure and pie chart based on sentiment scores
-    plt.figure()
-    labels = list(sentiment_counts.keys())
-    sizes = list(sentiment_counts.values())
-
-    colors = ['gold', 'lightcoral', 'lightskyblue']
-
-    plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140)
-    plt.axis('equal')
-    plt.title('Sentiment Distribution (Predicted)')
-
-    img_base64 = plot_to_base64(plt)
-
-    return jsonify({'image': img_base64, 'sentiment_counts': sentiment_counts})
-
-def plot_to_base64(figure):
-    buf = BytesIO()
-    figure.savefig(buf, format='png')
-    buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-    plt.close()  # Clear the figure
-    return img_base64
+    return analyze_and_plot(file)
 
 if __name__ == '__main__':
     app.run(debug=True)
